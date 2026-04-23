@@ -1,0 +1,20 @@
+# =============================================================================
+# Comex Brasil — ingestion/requirements.txt
+# Dependências para os scripts de download e conversão
+# =============================================================================
+
+# Download dos CSVs do MDIC
+requests==2.32.3
+
+# Engine de transformação — mais rápido que pandas em arquivos grandes
+polars==0.20.31
+
+# Suporte a leitura/escrita de Parquet
+pyarrow==16.1.0
+
+# Engine analítica local (usada a partir da v0.2)
+# Nota: dbt-duckdb 1.8.1 é incompatível com duckdb==0.10.3, usar 1.0.0+
+duckdb==1.0.0
+
+# Adaptador dbt para DuckDB (usado a partir da v0.2)
+dbt-duckdb==1.8.1

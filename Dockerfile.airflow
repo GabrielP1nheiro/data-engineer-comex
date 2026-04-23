@@ -1,0 +1,21 @@
+# =============================================================================
+# Comex Brasil — Dockerfile.airflow
+#
+# Imagem base oficial do Airflow + dependências do projeto:
+#   - polars        : engine de transformação para ingestão
+#   - pyarrow       : suporte a Parquet
+#   - requests      : download dos CSVs do MDIC
+#   - duckdb        : engine analítica local
+#   - dbt-duckdb    : adaptador dbt para DuckDB
+# =============================================================================
+
+ARG AIRFLOW_VERSION=2.9.3
+FROM apache/airflow:${AIRFLOW_VERSION}
+
+# Instala dependências do projeto
+# Rodamos como root apenas para o pip, depois voltamos ao usuário airflow
+USER airflow
+
+COPY ingestion/requirements.txt /tmp/requirements.txt
+
+RUN pip install --no-cache-dir -r /tmp/requirements.txt

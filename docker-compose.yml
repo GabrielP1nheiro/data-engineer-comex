@@ -1,0 +1,141 @@
+# =============================================================================
+# Comex Brasil — Data Engineering Portfolio
+# docker-compose.yml
+#
+# Serviços:
+#   - postgres        : metastore do Airflow
+#   - airflow-init    : inicializa o banco e cria o usuário admin (roda 1x)
+#   - airflow-webserver: UI do Airflow (http://localhost:8080)
+#   - airflow-scheduler: processa e agenda as DAGs
+#
+# Uso:
+#   docker compose up -d          # sobe todos os serviços
+#   docker compose down           # derruba (preserva volumes)
+#   docker compose down -v        # derruba e remove volumes (reset completo)
+# =============================================================================
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ""
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # Timezone Brasil
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: America/Sao_Paulo
+  volumes:
+    # DAGs e plugins do projeto
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/plugins:/opt/airflow/plugins
+    # Logs do Airflow (gitignored)
+    - airflow-logs:/opt/airflow/logs
+    # Scripts de ingestão acessíveis dentro dos containers
+    - ./ingestion:/opt/airflow/ingestion
+    # Dados — os containers leem/escrevem nos mesmos arquivos do host
+    - ./data:/opt/airflow/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - comex-network
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Banco de dados — metastore do Airflow
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - comex-network
+
+  # ---------------------------------------------------------------------------
+  # Inicialização — roda uma vez, cria tabelas e usuário admin
+  # Credenciais padrão: admin / admin  (altere em produção)
+  # ---------------------------------------------------------------------------
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Comex \
+          --lastname Admin \
+          --role Admin \
+          --email admin@comexbrasil.local
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Webserver — UI do Airflow
+  # Acesso: http://localhost:8080  (admin / admin)
+  # ---------------------------------------------------------------------------
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ---------------------------------------------------------------------------
+  # Scheduler — processa DAGs e agenda execuções
+  # ---------------------------------------------------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--hostname", "$${HOSTNAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+# =============================================================================
+# Volumes e redes
+# =============================================================================
+volumes:
+  postgres-db:
+    driver: local
+  airflow-logs:
+    driver: local
+
+networks:
+  comex-network:
+    driver: bridge
