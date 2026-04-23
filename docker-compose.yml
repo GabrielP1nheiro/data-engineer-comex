@@ -39,6 +39,7 @@ x-airflow-common: &airflow-common
     - ./ingestion:/opt/airflow/ingestion
     # Dados — os containers leem/escrevem nos mesmos arquivos do host
     - ./data:/opt/airflow/data
+    - ./dbt:/opt/airflow/dbt
   depends_on:
     postgres:
       condition: service_healthy

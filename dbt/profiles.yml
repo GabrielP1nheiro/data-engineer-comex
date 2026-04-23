@@ -1,0 +1,50 @@
+# =============================================================================
+# Comex Brasil — profiles.yml
+#
+# Este arquivo fica versionado (fora do ~/.dbt/) para reprodutibilidade.
+# O caminho é informado via env var DBT_PROFILES_DIR ou pela flag
+# --profiles-dir no comando dbt. O script scripts/dbt.sh já cuida disso.
+#
+# Targets disponíveis:
+#   duckdb   (padrão v0.2) — arquivo local ./data/comex.duckdb
+#   bigquery (v1.1)        — placeholder para migração futura
+# =============================================================================
+
+comex_brasil:
+  target: duckdb
+
+  outputs:
+
+    # -------------------------------------------------------------------------
+    # DuckDB local — camada analítica da v0.2
+    #
+    # Caminhos são resolvidos a partir do WORKDIR do dbt (dbt/ no container),
+    # então usamos caminhos relativos ao root do projeto via ../data.
+    # -------------------------------------------------------------------------
+    duckdb:
+      type: duckdb
+      # Arquivo persistente — sobrevive entre execuções dbt
+      path: "../data/comex.duckdb"
+      # Número de threads para paralelismo em models independentes
+      threads: 4
+      # Extensões carregadas automaticamente na conexão
+      extensions:
+        - parquet
+        - httpfs  # reserva — útil ao ler Parquet remoto (S3/GCS) no futuro
+
+    # -------------------------------------------------------------------------
+    # BigQuery — placeholder para v1.1 (NÃO usar ainda)
+    #
+    # Quando migrarmos para GCP, preencher project/dataset/keyfile e
+    # rodar `dbt run --target bigquery`. Os models SQL ficam idênticos.
+    # -------------------------------------------------------------------------
+    bigquery:
+      type: bigquery
+      method: service-account
+      project: comex-brasil-REPLACE
+      dataset: comex_brasil
+      keyfile: /opt/airflow/credentials/gcp-service-account.json
+      location: southamerica-east1
+      threads: 4
+      timeout_seconds: 300
+      priority: interactive

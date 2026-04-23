@@ -1,0 +1,54 @@
+# =============================================================================
+# Comex Brasil — dbt_project.yml
+#
+# Projeto dbt que transforma arquivos Parquet gerados pela ingestão
+# (EXP/IMP do MDIC) em um data warehouse analítico em camadas:
+#   sources (Parquet) -> staging -> core -> marts
+#
+# Engine local: DuckDB (arquivo ./data/comex.duckdb).
+# Migração futura (v1.1): basta trocar o target no profiles.yml.
+# =============================================================================
+
+name: 'comex_brasil'
+version: '0.2.0'
+config-version: 2
+
+# Profile usado por este projeto (definido em profiles.yml)
+profile: 'comex_brasil'
+
+# Diretórios do projeto
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# -----------------------------------------------------------------------------
+# Configuração por camada
+# -----------------------------------------------------------------------------
+# Convenção:
+#   staging -> view   (leve, sempre reflete o Parquet mais recente)
+#   core    -> table  (materializa joins e regras de negócio)
+#   marts   -> table  (agregações prontas para consumo, menores e rápidas)
+# -----------------------------------------------------------------------------
+models:
+  comex_brasil:
+    staging:
+      +materialized: view
+      +schema: staging
+    core:
+      +materialized: table
+      +schema: core
+    marts:
+      +materialized: table
+      +schema: marts
+
+# Variáveis do projeto — controlam janela de processamento
+vars:
+  ano_inicio: 2020
+  ano_fim: 2024

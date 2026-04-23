@@ -3,8 +3,8 @@
 > Pipeline de Data Engineering end-to-end usando dados públicos de comércio exterior brasileiro (MDIC / Comex Stat).
 
 ## Status do projeto
-![Version](https://img.shields.io/badge/version-v0.1-blue)
-![Status](https://img.shields.io/badge/status-infraestrutura%20base-brightgreen)
+![Version](https://img.shields.io/badge/version-v0.2-blue)
+![Status](https://img.shields.io/badge/status-dbt%20%2B%20DuckDB-brightgreen)
 
 ## Sobre o projeto
 
@@ -63,10 +63,12 @@ MDIC / Comex Stat (CSV)
 | Tabelas auxiliares | 21.298 | 11 MB | 1.3 MB | 8.5x |
 | **Total** | **~17.7 milhões** | **~1.2 GB** | **~210 MB** | **5.7x** |
 
+Após `dbt run` completo, o arquivo `data/comex.duckdb` fica em **~440 MB** (inclui staging em views e core/marts materializados como tabelas).
+
 ## Roadmap
 
 - [x] **v0.1 — Infraestrutura base (Docker + ingestão)**
-- [ ] v0.2 — dbt local com DuckDB
+- [x] **v0.2 — dbt local com DuckDB**
 - [ ] v0.3 — Orquestração com Airflow
 - [ ] v0.4 — Visualização (Streamlit)
 - [ ] v1.0 — MVP completo local
@@ -90,7 +92,8 @@ Dados públicos disponíveis em: https://www.gov.br/mdic/pt-br/assuntos/comercio
 ### Pré-requisitos
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e em execução
-- ~2 GB de espaço em disco para os dados (CSV + Parquet)
+- Git Bash (Windows) ou terminal bash (Linux/macOS)
+- ~3 GB de espaço em disco para dados + DuckDB
 - ~4 GB de RAM livres (o Airflow consome 2–4 GB)
 
 ### 1. Subir o ambiente
@@ -113,36 +116,140 @@ Acesse o Airflow em http://localhost:8080 (usuário `admin` / senha `admin`).
 docker compose exec airflow-scheduler python /opt/airflow/ingestion/download.py
 ```
 
-**Converter os CSVs para Parquet (recomendado — economiza ~5x de espaço):**
+**Converter os CSVs para Parquet:**
 
 ```bash
 docker compose exec airflow-scheduler python /opt/airflow/ingestion/convert_to_parquet.py
 ```
 
-### 3. Opções disponíveis
+### 3. Transformações com dbt
+
+```bash
+# Testar a conexão com o DuckDB
+./scripts/dbt.sh debug
+
+# Rodar todos os models (staging → core → marts)
+./scripts/dbt.sh run
+
+# Rodar models + testes (recomendado)
+./scripts/dbt.sh build
+
+# Rodar apenas uma camada
+./scripts/dbt.sh run --select staging
+./scripts/dbt.sh run --select core
+./scripts/dbt.sh run --select marts
+```
+
+Tempo esperado num `dbt build` completo: **~25 segundos** (17M linhas em DuckDB).
+
+### 4. Gerar e visualizar a documentação dbt
+
+```bash
+# Gera manifest.json + catalog.json + index.html em dbt/target/
+./scripts/dbt-docs.sh generate
+
+# Serve em http://localhost:8081
+./scripts/dbt-docs.sh serve
+```
+
+A interface mostra o lineage completo do pipeline (Parquet → staging → core → marts), descrição de cada coluna e o status de cada teste.
+
+### 5. Opções da ingestão
 
 ```bash
 # Download parcial: apenas anos específicos
 python ingestion/download.py --anos 2023 2024
 
-# Download apenas de exportações (sem importações)
+# Apenas exportações (sem importações)
 python ingestion/download.py --direcao exp
 
 # Sem tabelas auxiliares
 python ingestion/download.py --sem-aux
 
-# Forçar re-download (sobrescreve o que já existe)
+# Forçar re-download
 python ingestion/download.py --force
 ```
 
-Os mesmos argumentos (`--direcao`, `--sem-aux`, `--force`) também funcionam no `convert_to_parquet.py`.
+Os mesmos argumentos funcionam no `convert_to_parquet.py`.
 
-### 4. Parar o ambiente
+### 6. Parar o ambiente
 
 ```bash
 docker compose down          # preserva os dados
 docker compose down -v       # apaga volumes (reset completo)
 ```
+
+---
+
+## Modelos dbt (v0.2)
+
+```
+sources (Parquet)
+   ├── comex_raw.exportacoes       EXP_{2020..2024}.parquet
+   ├── comex_raw.importacoes       IMP_{2020..2024}.parquet
+   └── comex_aux.{ncm, ncm_sh, pais, pais_bloco, uf, via, urf}
+
+staging (views)
+   ├── stg_exportacoes     — tipagem e janela de anos
+   ├── stg_importacoes     — idem + CIF (FOB+frete+seguro)
+   ├── stg_ncm             — NCM + hierarquia SH (JOIN com ncm_sh)
+   ├── stg_paises          — códigos MDIC + ISO3
+   ├── stg_uf              — UFs + regiões
+   ├── stg_vias            — modais de transporte
+   ├── stg_urf             — Unidades da Receita Federal
+   └── stg_blocos          — país x bloco econômico
+
+core (tables)
+   ├── core_comercio       — fato unificado exp+imp, flag direcao
+   └── core_produtos       — dimensão NCM enriquecida
+
+marts (tables)
+   ├── mart_balanca_comercial       — saldo FOB por UF/mês/ano
+   ├── mart_exportacoes_por_estado  — ranking + share nacional
+   ├── mart_importacoes_por_estado  — ranking + share nacional
+   ├── mart_top_produtos            — ranking de NCMs por direção
+   └── mart_blocos_economicos       — comércio por bloco (Mercosul, UE, etc)
+```
+
+**Testes:** 60 data tests (not_null, unique, accepted_values, relationships) — todos verdes.
+
+## Exemplos de queries
+
+**Top 5 UFs exportadoras em 2024:**
+```sql
+select sg_uf, sum(vl_fob_usd)/1e9 as exp_bilhoes_usd
+from main_marts.mart_exportacoes_por_estado
+where ano = 2024
+group by 1 order by 2 desc limit 5;
+```
+
+Resultado:
+| UF | US$ bi |
+|---|---|
+| SP | 71.4 |
+| RJ | 45.8 |
+| MG | 42.1 |
+| MT | 27.6 |
+| PR | 23.3 |
+
+**Balança comercial por ano:**
+```sql
+select ano,
+       sum(vl_exp_fob_usd)/1e9 as exp_bi,
+       sum(vl_imp_fob_usd)/1e9 as imp_bi,
+       sum(saldo_fob_usd)/1e9  as saldo_bi
+from main_marts.mart_balanca_comercial
+group by 1 order by 1;
+```
+
+Resultado:
+| Ano | Exp (bi) | Imp (bi) | Saldo (bi) |
+|---|---|---|---|
+| 2020 | 209.2 | 158.8 | 50.4 |
+| 2021 | 280.8 | 219.4 | 61.4 |
+| 2022 | 334.1 | 272.6 | 61.5 |
+| 2023 | 339.7 | 240.8 | **98.9** |
+| 2024 | 337.0 | 262.9 | 74.2 |
 
 ---
 
@@ -154,7 +261,7 @@ Os CSVs do MDIC vêm em **Latin-1 (ISO-8859-1)**, não UTF-8. Se lidos como UTF-
 
 ### Códigos com zeros à esquerda
 
-Campos como `CO_MES` (`"04"`), `CO_VIA` (`"04"`), `CO_URF` (`"0817600"`) precisam ser tratados como **string**, não integer — caso contrário os zeros à esquerda desaparecem e os joins com as tabelas auxiliares quebram. O schema Parquet preserva isso.
+Campos como `CO_MES`, `CO_NCM`, `CO_PAIS`, `CO_URF` têm zeros à esquerda no MDIC (`"04"`, `"00101600"`, `"049"`, `"0817600"`). O converter para Parquet transformou alguns em BIGINT, perdendo esses zeros. A camada staging do dbt aplica `LPAD` explicitamente (`CO_NCM` → 8 dígitos, `CO_PAIS` → 3, `CO_URF` → 7) antes de qualquer join.
 
 ### Certificado SSL do gov.br no container
 
@@ -162,7 +269,28 @@ O servidor `balanca.economia.gov.br` usa certificado emitido pela ICP-Brasil, qu
 
 ### Permissões de arquivo no Windows
 
-Arquivos criados pelo container (usuário `airflow`, UID 50000) aparecem como "sem permissão" no Explorer do Windows. Clicar em "Continuar" ajusta as permissões uma vez e o aviso não retorna. Não afeta a leitura dos arquivos pelos scripts dentro do Docker.
+Arquivos criados pelo container (usuário `airflow`, UID 50000) aparecem como "sem permissão" no Explorer do Windows. Clicar em "Continuar" ajusta as permissões uma vez e o aviso não retorna.
+
+### Git Bash e conversão de paths
+
+O Git Bash no Windows converte paths Unix do tipo `/opt/airflow/dbt` para paths Windows antes de passar para o Docker. Para desabilitar:
+
+```bash
+echo 'export MSYS_NO_PATHCONV=1' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### DuckDB como engine local
+
+Usamos DuckDB como data warehouse local em vez de Postgres/MySQL. Motivos:
+- **Zero setup** — é um arquivo (`comex.duckdb`) embarcado no contêiner
+- **Colunar e paralelo** — agrega 17M linhas em segundos
+- **Lê Parquet direto** — dispensa ETL "físico" (os Parquet são a source real)
+- **Portável** — mesmo arquivo pode ser aberto via Python, CLI, Tableau, etc.
+
+### Um produto aparece em exp **e** em imp? Sim, é real.
+
+Em 2024 o "óleo bruto de petróleo" (NCM 27090010) aparece no top 1 das exportações **e** das importações. Não é erro do pipeline. O Brasil exporta petróleo pesado (Pré-sal) e importa petróleo leve para refinação. O modelo captura esse fato sem tratamento especial porque a granularidade do MDIC já separa por direção.
 
 ---
 
@@ -174,27 +302,35 @@ comex-brasil-de/
 ├── README.md                        # Este arquivo
 ├── PROJECT_CONTEXT.md               # Contexto completo (stack, roadmap, decisões)
 ├── .gitignore
-├── docker-compose.yml               # Airflow + Postgres
-├── Dockerfile.airflow               # Imagem customizada com dependências do projeto
+├── docker-compose.yml               # Airflow + Postgres + volume do dbt
+├── Dockerfile.airflow               # Imagem customizada (polars, duckdb, dbt-duckdb)
 │
-├── data/
-│   ├── raw/                         # CSVs originais do MDIC (gitignored)
+├── data/                            # gitignored
+│   ├── raw/                         # CSVs originais do MDIC
+│   ├── parquet/                     # Arquivos convertidos
 │   │   ├── exp/
-│   │   └── imp/
-│   ├── parquet/                     # Arquivos convertidos (gitignored)
-│   │   ├── exp/
-│   │   └── imp/
-│   └── aux/                         # Tabelas auxiliares (NCM, países, UF, etc)
+│   │   ├── imp/
+│   │   └── aux/
+│   └── comex.duckdb                 # Data warehouse local (~440 MB após dbt build)
 │
 ├── ingestion/
-│   ├── download.py                  # Download dos CSVs do MDIC
-│   ├── convert_to_parquet.py        # Conversão CSV → Parquet
+│   ├── download.py
+│   ├── convert_to_parquet.py
 │   └── requirements.txt
 │
-├── dbt/                             # Models dbt (v0.2)
-│   └── models/{staging,core,marts}/
+├── dbt/
+│   ├── dbt_project.yml
+│   ├── profiles.yml
+│   └── models/
+│       ├── staging/   (8 views + sources + tests)
+│       ├── core/      (2 tables + tests)
+│       └── marts/     (5 tables + tests)
 │
-├── airflow/                         # DAGs do Airflow (v0.3)
+├── scripts/
+│   ├── dbt.sh                       # Wrapper para comandos dbt
+│   └── dbt-docs.sh                  # Gera e serve a documentação dbt
+│
+├── airflow/                         # DAGs (v0.3)
 │   └── dags/
 │
 ├── dashboard/                       # Streamlit (v0.4)

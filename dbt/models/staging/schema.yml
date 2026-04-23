@@ -1,0 +1,165 @@
+# =============================================================================
+# Schema & Tests — Camada Staging
+#
+# Estratégia de testes:
+#   - Chaves naturais: not_null nas auxiliares
+#   - Unicidade:       unique nas auxiliares (NCM, PAIS, UF, VIA, URF)
+#   - Relationships:   FKs das transacionais apontam para auxiliares
+#
+# Relationships em tabelas grandes usam severity=warn para não quebrar
+# quando códigos órfãos aparecerem (acontece em dados brutos do MDIC).
+#
+# Sintaxe atualizada para dbt 1.11+: parâmetros de generic tests vão
+# dentro de `arguments:` (elimina o warning de deprecation).
+# =============================================================================
+
+version: 2
+
+models:
+
+  # ---------------------------------------------------------------------------
+  # Transacionais
+  # ---------------------------------------------------------------------------
+  - name: stg_exportacoes
+    description: Exportações brasileiras tipadas e filtradas pela janela de anos.
+    columns:
+      - name: ano
+        description: Ano da operação (integer).
+        data_tests:
+          - not_null
+      - name: mes
+        description: Mês da operação (string "01"-"12").
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['01','02','03','04','05','06','07','08','09','10','11','12']
+      - name: data_ref
+        description: Primeiro dia do mês/ano da operação.
+        data_tests:
+          - not_null
+      - name: co_ncm
+        description: FK para stg_ncm.co_ncm (8 dígitos, zero-padded).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ncm')
+                field: co_ncm
+              config:
+                severity: warn
+      - name: co_pais
+        description: FK para stg_paises.co_pais (3 dígitos, zero-padded).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_paises')
+                field: co_pais
+              config:
+                severity: warn
+      - name: sg_uf
+        description: FK para stg_uf.sg_uf.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_uf')
+                field: sg_uf
+              config:
+                severity: warn
+      - name: vl_fob_usd
+        description: Valor FOB em dólares americanos.
+        data_tests:
+          - not_null
+
+  - name: stg_importacoes
+    description: Importações brasileiras tipadas — inclui FRETE, SEGURO e CIF.
+    columns:
+      - name: ano
+        data_tests: [not_null]
+      - name: mes
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['01','02','03','04','05','06','07','08','09','10','11','12']
+      - name: co_ncm
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ncm')
+                field: co_ncm
+              config:
+                severity: warn
+      - name: co_pais
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_paises')
+                field: co_pais
+              config:
+                severity: warn
+      - name: vl_fob_usd
+        data_tests: [not_null]
+      - name: vl_cif_usd
+        description: FOB + frete + seguro.
+        data_tests: [not_null]
+
+  # ---------------------------------------------------------------------------
+  # Auxiliares
+  # ---------------------------------------------------------------------------
+  - name: stg_ncm
+    description: NCM 8 dígitos com descrição PT e hierarquia SH (SH2/SH4/SH6).
+    columns:
+      - name: co_ncm
+        data_tests:
+          - not_null
+          - unique
+      - name: co_sh2
+        description: Capítulo do Sistema Harmonizado (2 dígitos).
+      - name: co_sh4
+        description: Posição do Sistema Harmonizado (4 dígitos).
+
+  - name: stg_paises
+    description: Países com códigos MDIC e ISO.
+    columns:
+      - name: co_pais
+        data_tests:
+          - not_null
+          - unique
+
+  - name: stg_uf
+    description: Unidades Federativas brasileiras.
+    columns:
+      - name: sg_uf
+        data_tests:
+          - not_null
+          - unique
+
+  - name: stg_vias
+    description: Vias de transporte.
+    columns:
+      - name: co_via
+        data_tests:
+          - not_null
+          - unique
+
+  - name: stg_urf
+    description: Unidades da Receita Federal de embarque/desembarque.
+    columns:
+      - name: co_urf
+        data_tests:
+          - not_null
+          - unique
+
+  - name: stg_blocos
+    description: |
+      País x bloco econômico. Sem unique em co_pais porque um país
+      pode pertencer a vários blocos simultaneamente.
+    columns:
+      - name: co_pais
+        data_tests: [not_null]
+      - name: co_bloco
+        data_tests: [not_null]

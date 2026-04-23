@@ -30,7 +30,7 @@ Construir um pipeline de Data Engineering end-to-end usando dados públicos de c
 - **Tabelas principais:**
   - Exportações (EXP) — por ano
   - Importações (IMP) — por ano
-  - Tabelas auxiliares: NCM, países, UF, vias, URF
+  - Tabelas auxiliares: NCM, NCM_SH, países, UF, vias, URF
 
 ---
 
@@ -59,25 +59,34 @@ Construir um pipeline de Data Engineering end-to-end usando dados públicos de c
 - Migração para BigQuery (GCP) é feita apenas trocando o adaptador no `profiles.yml` do dbt
 - Todo o código SQL dos models dbt permanece **inalterado** na migração
 
+### Decisões da v0.2
+- **Sources via `meta.external_location`** (sintaxe dbt-duckdb) apontando para globs de Parquet
+- **Caminhos absolutos** no sources.yml (`/opt/airflow/data/...`) para evitar bugs de working directory
+- **LPAD explícito** na staging para preservar zeros à esquerda perdidos na conversão CSV→Parquet (NCM 8 dígitos, PAIS 3, URF 7)
+- **Materialização por camada**: staging=view, core=table, marts=table
+- **Valor monetário único não foi criado em core_comercio** — FOB, frete, seguro e CIF ficam em colunas separadas; o mart escolhe qual usar
+
 ---
 
 ## Roadmap de versões
 
-### v0.1 — Infraestrutura base
-- [ ] Estrutura de pastas do projeto
-- [ ] `docker-compose.yml` com Airflow
-- [ ] Script de download dos CSVs do MDIC
-- [ ] Conversão CSV → Parquet
-- [ ] README inicial
+### v0.1 — Infraestrutura base ✅
+- [x] Estrutura de pastas do projeto
+- [x] `docker-compose.yml` com Airflow
+- [x] Script de download dos CSVs do MDIC
+- [x] Conversão CSV → Parquet
+- [x] README inicial
 
-### v0.2 — dbt local com DuckDB
-- [ ] Configuração do dbt Core com adaptador DuckDB
-- [ ] `profiles.yml` para DuckDB local
-- [ ] Model `staging` (limpeza e tipagem dos dados brutos)
-- [ ] Model `core` (regras de negócio, joins com tabelas auxiliares)
-- [ ] Model `marts` (agregações analíticas prontas para consumo)
-- [ ] Testes dbt (not_null, unique, relationships)
-- [ ] `dbt docs generate` funcionando
+### v0.2 — dbt local com DuckDB ✅
+- [x] Configuração do dbt Core com adaptador DuckDB
+- [x] `profiles.yml` para DuckDB local (+ placeholder BigQuery)
+- [x] Models staging (8 views)
+- [x] Models core (2 tables)
+- [x] Models marts (5 tables)
+- [x] 60 testes dbt (not_null, unique, relationships, accepted_values)
+- [x] `dbt docs generate` funcionando
+- [x] Script helper `./scripts/dbt.sh`
+- [x] Volume `./dbt:/opt/airflow/dbt` no docker-compose
 
 ### v0.3 — Orquestração com Airflow
 - [ ] DAG de ingestão (download + conversão Parquet)
@@ -131,71 +140,72 @@ comex-brasil-de/
 ├── PROJECT_CONTEXT.md               # Este arquivo — contexto para o assistente de IA
 ├── .gitignore
 ├── docker-compose.yml               # Airflow + dependências
+├── Dockerfile.airflow               # Imagem customizada
 │
 ├── data/
 │   ├── raw/                         # CSVs originais do MDIC (gitignored)
 │   ├── parquet/                     # Arquivos convertidos (gitignored)
-│   └── aux/                         # Tabelas auxiliares (NCM, países, UF)
+│   │   ├── exp/
+│   │   ├── imp/
+│   │   └── aux/
+│   └── comex.duckdb                 # Data warehouse local (gitignored)
 │
 ├── ingestion/
-│   ├── download.py                  # Script de download dos CSVs do MDIC
-│   ├── convert_to_parquet.py        # Conversão CSV → Parquet
+│   ├── download.py
+│   ├── convert_to_parquet.py
 │   └── requirements.txt
 │
 ├── dbt/
 │   ├── dbt_project.yml
-│   ├── profiles.yml                 # Perfis: duckdb (local), bigquery (GCP), oci (OCI)
+│   ├── profiles.yml                 # Perfis: duckdb (local), bigquery (GCP)
 │   ├── models/
-│   │   ├── staging/                 # Limpeza e tipagem
-│   │   │   ├── stg_exportacoes.sql
-│   │   │   ├── stg_importacoes.sql
-│   │   │   └── stg_ncm.sql
-│   │   ├── core/                    # Regras de negócio
-│   │   │   ├── core_comercio.sql
-│   │   │   └── core_produtos.sql
-│   │   └── marts/                   # Agregações para consumo
-│   │       ├── mart_balanca_comercial.sql
-│   │       ├── mart_exportacoes_por_estado.sql
-│   │       └── mart_top_produtos.sql
+│   │   ├── staging/                 # 8 views (stg_*)
+│   │   ├── core/                    # 2 tables (core_*)
+│   │   └── marts/                   # 5 tables (mart_*)
 │   ├── tests/
-│   └── macros/
+│   ├── macros/
+│   └── target/                      # dbt docs + manifest (gitignored)
+│
+├── scripts/
+│   ├── dbt.sh                       # Wrapper para dbt dentro do container
+│   └── dbt-docs.sh                  # Gera e serve a documentação dbt
 │
 ├── airflow/
-│   ├── dags/
-│   │   ├── dag_ingestion.py         # Download + conversão Parquet
-│   │   ├── dag_transformation.py    # Dispara dbt run
-│   │   └── dag_pipeline.py          # Pipeline completo end-to-end
+│   ├── dags/                        # DAGs (v0.3)
 │   └── plugins/
 │
 ├── dashboard/
-│   └── streamlit_app.py             # App Streamlit (alternativa ao Metabase)
+│   └── streamlit_app.py             # App Streamlit (v0.4)
 │
 └── docs/
-    ├── architecture.md              # Decisões arquiteturais detalhadas
-    └── images/                      # Screenshots e diagramas
+    ├── architecture.md
+    └── images/
 ```
 
 ---
 
-## Modelos dbt planejados
+## Modelos dbt implementados (v0.2)
 
-### Staging (limpeza e tipagem)
-- `stg_exportacoes` — dados brutos de exportação com tipos corretos
-- `stg_importacoes` — dados brutos de importação com tipos corretos
-- `stg_ncm` — tabela auxiliar de produtos (Nomenclatura Comum do Mercosul)
-- `stg_paises` — tabela auxiliar de países
-- `stg_uf` — tabela auxiliar de estados brasileiros
+### Staging — views (limpeza e tipagem)
+- `stg_exportacoes` — 7.5M linhas, EXP com LPAD aplicado nos códigos
+- `stg_importacoes` — 10.2M linhas, IMP com cálculo de CIF = FOB + frete + seguro
+- `stg_ncm` — NCM enriquecido com hierarquia SH2/SH4/SH6 (JOIN com NCM_SH)
+- `stg_paises` — códigos MDIC + ISO3 numérico e alfabético
+- `stg_uf` — UFs brasileiras + região
+- `stg_vias` — vias de transporte
+- `stg_urf` — Unidades da Receita Federal
+- `stg_blocos` — relação país x bloco econômico
 
-### Core (regras de negócio)
-- `core_comercio` — union de exportações e importações com flag de direção
-- `core_produtos` — produtos enriquecidos com descrição NCM e categoria
+### Core — tables (regras de negócio)
+- `core_comercio` — fato unificado exp+imp com flag `direcao`, ~17.7M linhas
+- `core_produtos` — dimensão NCM com descrição PT e hierarquia SH completa
 
-### Marts (consumo analítico)
-- `mart_balanca_comercial` — saldo por ano/mês/estado
-- `mart_exportacoes_por_estado` — ranking de estados exportadores
-- `mart_importacoes_por_estado` — ranking de estados importadores
-- `mart_top_produtos` — principais produtos por valor FOB
-- `mart_blocos_economicos` — agrupamento por bloco (Mercosul, UE, Ásia, etc.)
+### Marts — tables (consumo analítico)
+- `mart_balanca_comercial` — saldo FOB por ano/mês/UF
+- `mart_exportacoes_por_estado` — ranking de UFs com share nacional
+- `mart_importacoes_por_estado` — idem para IMP (FOB e CIF)
+- `mart_top_produtos` — ranking de NCMs com hierarquia SH
+- `mart_blocos_economicos` — comércio por bloco (MERCOSUL, UE, Ásia, etc)
 
 ---
 
@@ -212,11 +222,12 @@ comex-brasil-de/
 
 ## Notas importantes
 
-- **Dados grandes:** Os CSVs do MDIC podem ter vários GBs por ano — o `.gitignore` deve excluir a pasta `data/raw/` e `data/parquet/`
-- **Custo cloud:** GCP tem 1TB/mês de queries no BigQuery gratuito — suficiente para o projeto. OCI tem free tier permanente mais generoso que o GCP
+- **Dados grandes:** Os CSVs do MDIC podem ter vários GBs por ano — o `.gitignore` exclui `data/raw/`, `data/parquet/` e o `comex.duckdb`
+- **Custo cloud:** GCP tem 1TB/mês de queries no BigQuery gratuito. OCI tem free tier permanente mais generoso que o GCP
 - **Migração dbt:** Apenas o `profiles.yml` muda entre DuckDB, BigQuery e OCI. Os models SQL permanecem idênticos
-- **Airflow e memória:** O Airflow via Docker consome 2–4GB de RAM. Em máquinas com menos memória, considerar Prefect como alternativa mais leve
+- **Airflow e memória:** O Airflow via Docker consome 2–4GB de RAM
 - **Snowflake:** Pode ser adicionado via trial de 30 dias em qualquer versão — basta adicionar um perfil no `profiles.yml`
+- **Git Bash no Windows:** Exige `export MSYS_NO_PATHCONV=1` para não converter paths Unix em Windows ao chamar `docker exec`
 
 ---
 
@@ -230,4 +241,4 @@ O assistente terá todo o contexto necessário para continuar de onde parou.
 ---
 
 *Última atualização: Abril 2026*
-*Versão atual do projeto: v0.0 (planejamento)*
+*Versão atual do projeto: v0.2*

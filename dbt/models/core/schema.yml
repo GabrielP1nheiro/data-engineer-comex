@@ -1,0 +1,59 @@
+# =============================================================================
+# Schema & Tests — Camada Core
+#
+# Testes focados em invariantes que devem SEMPRE valer:
+#   - direcao com apenas 2 valores possíveis
+#   - FK de produto válida (todo NCM existe em core_produtos)
+#   - Chave primária da dimensão de produtos
+# =============================================================================
+
+version: 2
+
+models:
+
+  - name: core_comercio
+    description: |
+      Fato unificado de comércio exterior — união de exportações e importações
+      com flag `direcao`. Valores FOB sempre presentes; frete/seguro/CIF apenas
+      para importações.
+    columns:
+      - name: ano
+        data_tests: [not_null]
+      - name: mes
+        data_tests: [not_null]
+      - name: direcao
+        description: EXP (exportação) ou IMP (importação).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['EXP', 'IMP']
+      - name: co_ncm
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('core_produtos')
+                field: co_ncm
+              config:
+                severity: warn
+      - name: co_pais
+        data_tests: [not_null]
+      - name: vl_fob_usd
+        description: Valor FOB em dólares — presente em exp e imp.
+        data_tests: [not_null]
+
+  - name: core_produtos
+    description: Dimensão NCM com descrição e hierarquia SH completa.
+    columns:
+      - name: co_ncm
+        description: Chave primária — NCM de 8 dígitos.
+        data_tests:
+          - not_null
+          - unique
+      - name: co_sh2
+        description: Capítulo SH (2 dígitos).
+      - name: co_sh4
+        description: Posição SH (4 dígitos).
+      - name: co_sh6
+        description: Subposição SH (6 dígitos).

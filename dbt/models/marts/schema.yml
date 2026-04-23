@@ -1,0 +1,81 @@
+# =============================================================================
+# Schema & Tests — Camada Marts
+#
+# Testes focados em garantir que:
+#   - Agregações não geram NULLs em chaves temporais
+#   - Os marts têm a granularidade esperada (teste de unicidade composta)
+#   - Valores monetários estão presentes
+# =============================================================================
+
+version: 2
+
+models:
+
+  - name: mart_balanca_comercial
+    description: |
+      Balança comercial mensal por UF — exportações FOB, importações FOB,
+      saldo e corrente de comércio.
+    columns:
+      - name: ano
+        data_tests: [not_null]
+      - name: mes
+        data_tests: [not_null]
+      - name: sg_uf
+        data_tests: [not_null]
+      - name: saldo_fob_usd
+        description: Exportações FOB − Importações FOB.
+        data_tests: [not_null]
+
+  - name: mart_exportacoes_por_estado
+    description: Ranking mensal de UFs exportadoras com share nacional.
+    columns:
+      - name: ano
+        data_tests: [not_null]
+      - name: sg_uf
+        data_tests: [not_null]
+      - name: rank_mes
+        description: Posição da UF no ranking nacional do mês (1 = maior).
+        data_tests: [not_null]
+
+  - name: mart_importacoes_por_estado
+    description: Ranking mensal de UFs importadoras com share nacional.
+    columns:
+      - name: ano
+        data_tests: [not_null]
+      - name: sg_uf
+        data_tests: [not_null]
+
+  - name: mart_top_produtos
+    description: Ranking anual de NCMs por valor FOB, com hierarquia SH e share.
+    columns:
+      - name: ano
+        data_tests: [not_null]
+      - name: direcao
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['EXP', 'IMP']
+      - name: co_ncm
+        data_tests: [not_null]
+      - name: rank_ano_direcao
+        data_tests: [not_null]
+
+  - name: mart_blocos_economicos
+    description: |
+      Valor comercializado por bloco econômico, ano, mês e direção.
+      Um país pode aparecer em múltiplos blocos — NÃO somar o mart inteiro
+      sem filtrar por co_bloco.
+    columns:
+      - name: ano
+        data_tests: [not_null]
+      - name: direcao
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['EXP', 'IMP']
+      - name: co_bloco
+        data_tests: [not_null]
+      - name: no_bloco
+        data_tests: [not_null]

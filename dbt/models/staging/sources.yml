@@ -1,0 +1,110 @@
+# =============================================================================
+# Sources — Arquivos Parquet gerados pela ingestão
+#
+# Caminhos absolutos dentro do container (/opt/airflow/data/...) para evitar
+# problemas com o working directory do dbt-duckdb ao resolver paths relativos.
+#
+# Estrutura esperada:
+#   /opt/airflow/data/parquet/exp/EXP_{ANO}.parquet
+#   /opt/airflow/data/parquet/imp/IMP_{ANO}.parquet
+#   /opt/airflow/data/parquet/aux/{NCM, NCM_SH, PAIS, PAIS_BLOCO, UF, URF, VIA}.parquet
+# =============================================================================
+
+version: 2
+
+sources:
+
+  # ---------------------------------------------------------------------------
+  # Dados transacionais
+  # ---------------------------------------------------------------------------
+  - name: comex_raw
+    description: |
+      Dados brutos de comércio exterior do MDIC/Comex Stat, convertidos
+      de CSV (Latin-1, separador `;`) para Parquet pela camada de ingestão.
+    meta:
+      origem: MDIC / Comex Stat
+      url: https://www.gov.br/mdic/pt-br/assuntos/comercio-exterior/estatisticas/base-de-dados-bruta
+
+    tables:
+
+      - name: exportacoes
+        description: Exportações brasileiras por NCM, mês, país e UF.
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/exp/*.parquet', union_by_name=true)"
+        columns:
+          - name: CO_ANO
+          - name: CO_MES
+          - name: CO_NCM
+          - name: CO_UNID
+          - name: CO_PAIS
+          - name: SG_UF_NCM
+          - name: CO_VIA
+          - name: CO_URF
+          - name: QT_ESTAT
+          - name: KG_LIQUIDO
+          - name: VL_FOB
+
+      - name: importacoes
+        description: |
+          Importações brasileiras — inclui VL_FRETE e VL_SEGURO (não presentes em EXP).
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/imp/*.parquet', union_by_name=true)"
+        columns:
+          - name: CO_ANO
+          - name: CO_MES
+          - name: CO_NCM
+          - name: CO_UNID
+          - name: CO_PAIS
+          - name: SG_UF_NCM
+          - name: CO_VIA
+          - name: CO_URF
+          - name: QT_ESTAT
+          - name: KG_LIQUIDO
+          - name: VL_FOB
+          - name: VL_FRETE
+          - name: VL_SEGURO
+
+  # ---------------------------------------------------------------------------
+  # Tabelas auxiliares — correlações de códigos do MDIC
+  # ---------------------------------------------------------------------------
+  - name: comex_aux
+    description: Tabelas de correlação publicadas pelo MDIC (códigos -> descrições).
+
+    tables:
+
+      - name: ncm
+        description: Nomenclatura Comum do Mercosul — NCM de 8 dígitos.
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/aux/NCM.parquet')"
+
+      - name: ncm_sh
+        description: |
+          Descrições da hierarquia Sistema Harmonizado (SH):
+          capítulo SH2, posição SH4, subposição SH6.
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/aux/NCM_SH.parquet')"
+
+      - name: pais
+        description: Países e códigos ISO3 utilizados pelo MDIC.
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/aux/PAIS.parquet')"
+
+      - name: pais_bloco
+        description: Associação de países a blocos econômicos (Mercosul, UE, Ásia, etc).
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/aux/PAIS_BLOCO.parquet')"
+
+      - name: uf
+        description: Unidades Federativas do Brasil.
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/aux/UF.parquet')"
+
+      - name: via
+        description: Vias de transporte (marítima, aérea, rodoviária, etc).
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/aux/VIA.parquet')"
+
+      - name: urf
+        description: Unidades da Receita Federal de embarque/desembarque.
+        meta:
+          external_location: "read_parquet('/opt/airflow/data/parquet/aux/URF.parquet')"
