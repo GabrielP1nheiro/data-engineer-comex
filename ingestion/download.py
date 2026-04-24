@@ -23,14 +23,22 @@ Uso:
 """
  
 from __future__ import annotations
- 
+
 import argparse
 import logging
 import sys
+from enum import Enum
 from pathlib import Path
- 
+
 import requests
 import urllib3
+
+
+class Result(Enum):
+    """Resultado de uma operação de download individual."""
+    OK = "ok"
+    SKIPPED = "skipped"
+    FAILED = "failed"
  
 # -----------------------------------------------------------------------------
 # Configuração SSL
@@ -96,21 +104,20 @@ log = logging.getLogger("comex.download")
 # Funções de download
 # -----------------------------------------------------------------------------
  
-def _download_streaming(url: str, destino: Path, force: bool = False) -> bool:
+def _download_streaming(url: str, destino: Path, force: bool = False) -> Result:
     """
     Baixa um arquivo via HTTP em streaming, escrevendo em blocos no disco.
-    Retorna True se o download foi realizado, False se foi pulado (já existia).
- 
+
     Streaming evita carregar o arquivo inteiro na memória — essencial porque
     os CSVs do MDIC podem passar de 1 GB.
     """
     if destino.exists() and not force:
         tamanho_mb = destino.stat().st_size / (1024 * 1024)
         log.info(f"⏭  Pulando (já existe): {destino.name} [{tamanho_mb:.1f} MB]")
-        return False
- 
+        return Result.SKIPPED
+
     destino.parent.mkdir(parents=True, exist_ok=True)
- 
+
     log.info(f"⬇  Baixando: {url}")
     try:
         with requests.get(
@@ -120,10 +127,10 @@ def _download_streaming(url: str, destino: Path, force: bool = False) -> bool:
             verify=VERIFY_SSL,
         ) as resposta:
             resposta.raise_for_status()
- 
+
             tamanho_total = int(resposta.headers.get("Content-Length", 0))
             tamanho_total_mb = tamanho_total / (1024 * 1024) if tamanho_total else 0
- 
+
             baixado = 0
             with open(destino, "wb") as arquivo:
                 for bloco in resposta.iter_content(chunk_size=CHUNK_SIZE):
@@ -131,7 +138,7 @@ def _download_streaming(url: str, destino: Path, force: bool = False) -> bool:
                         continue
                     arquivo.write(bloco)
                     baixado += len(bloco)
- 
+
                     # Progresso apenas se soubermos o tamanho total
                     if tamanho_total:
                         pct = (baixado / tamanho_total) * 100
@@ -143,28 +150,27 @@ def _download_streaming(url: str, destino: Path, force: bool = False) -> bool:
                             flush=True,
                         )
             print()  # quebra de linha após o progresso
- 
+
     except requests.HTTPError as e:
         log.error(f"❌ Erro HTTP {e.response.status_code} em {url}")
-        # Remove o arquivo parcial se houve erro
         if destino.exists():
             destino.unlink()
-        return False
+        return Result.FAILED
     except requests.RequestException as e:
         log.error(f"❌ Falha de rede em {url}: {e}")
         if destino.exists():
             destino.unlink()
-        return False
- 
+        return Result.FAILED
+
     tamanho_mb = destino.stat().st_size / (1024 * 1024)
     log.info(f"✅ Salvo: {destino.name} [{tamanho_mb:.1f} MB]")
-    return True
+    return Result.OK
  
  
-def baixar_ncm(ano: int, direcao: str, force: bool = False) -> bool:
+def baixar_ncm(ano: int, direcao: str, force: bool = False) -> Result:
     """
     Baixa um arquivo NCM (EXP ou IMP) de um ano específico.
- 
+
     Args:
         ano: ano do arquivo (ex: 2024)
         direcao: 'exp' para exportação, 'imp' para importação
@@ -173,23 +179,23 @@ def baixar_ncm(ano: int, direcao: str, force: bool = False) -> bool:
     direcao_upper = direcao.upper()
     if direcao_upper not in ("EXP", "IMP"):
         raise ValueError(f"Direção inválida: {direcao}. Use 'exp' ou 'imp'.")
- 
+
     nome_arquivo = f"{direcao_upper}_{ano}.csv"
     url = f"{BASE_URL_NCM}/{nome_arquivo}"
     pasta = RAW_EXP if direcao_upper == "EXP" else RAW_IMP
     destino = pasta / nome_arquivo
- 
+
     return _download_streaming(url, destino, force=force)
- 
- 
-def baixar_tabela_auxiliar(nome: str, force: bool = False) -> bool:
+
+
+def baixar_tabela_auxiliar(nome: str, force: bool = False) -> Result:
     """
     Baixa uma tabela auxiliar (NCM, PAIS, UF, etc.) do MDIC.
     """
     nome_arquivo = f"{nome}.csv"
     url = f"{BASE_URL_AUX}/{nome_arquivo}"
     destino = AUX_DIR / nome_arquivo
- 
+
     return _download_streaming(url, destino, force=force)
  
  
@@ -202,9 +208,12 @@ def executar(
     direcoes: list[str],
     baixar_aux: bool = True,
     force: bool = False,
-) -> None:
+) -> int:
     """
     Executa o download completo conforme os parâmetros fornecidos.
+
+    Retorna o número de falhas. Zero significa que tudo correu bem
+    (arquivos baixados ou pulados por já existirem).
     """
     log.info("=" * 60)
     log.info("COMEX BRASIL — Download de dados do MDIC")
@@ -214,32 +223,48 @@ def executar(
     log.info(f"Auxiliares: {'sim' if baixar_aux else 'não'}")
     log.info(f"Force:      {'sim' if force else 'não'}")
     log.info("=" * 60)
- 
+
     baixados = 0
     pulados = 0
- 
+    falhas: list[str] = []
+
+    def _registrar(resultado: Result, rotulo: str) -> None:
+        nonlocal baixados, pulados
+        if resultado is Result.OK:
+            baixados += 1
+        elif resultado is Result.SKIPPED:
+            pulados += 1
+        else:
+            falhas.append(rotulo)
+
     # Dados NCM (exportação/importação)
     for direcao in direcoes:
         for ano in anos:
-            if baixar_ncm(ano, direcao, force=force):
-                baixados += 1
-            else:
-                pulados += 1
- 
+            _registrar(
+                baixar_ncm(ano, direcao, force=force),
+                f"{direcao.upper()}_{ano}.csv",
+            )
+
     # Tabelas auxiliares
     if baixar_aux:
         log.info("-" * 60)
         log.info("Tabelas auxiliares")
         log.info("-" * 60)
         for nome in TABELAS_AUXILIARES:
-            if baixar_tabela_auxiliar(nome, force=force):
-                baixados += 1
-            else:
-                pulados += 1
- 
+            _registrar(
+                baixar_tabela_auxiliar(nome, force=force),
+                f"{nome}.csv",
+            )
+
     log.info("=" * 60)
-    log.info(f"Concluído: {baixados} baixados, {pulados} pulados")
+    log.info(
+        f"Concluído: {baixados} baixados, {pulados} pulados, {len(falhas)} falhas"
+    )
+    if falhas:
+        log.error(f"❌ Arquivos com falha: {', '.join(falhas)}")
     log.info("=" * 60)
+
+    return len(falhas)
  
  
 def parse_args() -> argparse.Namespace:
@@ -284,7 +309,7 @@ def main() -> int:
         direcoes = [args.direcao]
  
     try:
-        executar(
+        falhas = executar(
             anos=args.anos,
             direcoes=direcoes,
             baixar_aux=not args.sem_aux,
@@ -296,8 +321,8 @@ def main() -> int:
     except Exception as e:
         log.exception(f"Erro inesperado: {e}")
         return 1
- 
-    return 0
+
+    return 1 if falhas else 0
  
  
 if __name__ == "__main__":

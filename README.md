@@ -3,8 +3,8 @@
 > Pipeline de Data Engineering end-to-end usando dados públicos de comércio exterior brasileiro (MDIC / Comex Stat).
 
 ## Status do projeto
-![Version](https://img.shields.io/badge/version-v0.2-blue)
-![Status](https://img.shields.io/badge/status-dbt%20%2B%20DuckDB-brightgreen)
+![Version](https://img.shields.io/badge/version-v0.3-blue)
+![Status](https://img.shields.io/badge/status-Airflow%20orchestrated-brightgreen)
 
 ## Sobre o projeto
 
@@ -69,7 +69,7 @@ Após `dbt run` completo, o arquivo `data/comex.duckdb` fica em **~440 MB** (inc
 
 - [x] **v0.1 — Infraestrutura base (Docker + ingestão)**
 - [x] **v0.2 — dbt local com DuckDB**
-- [ ] v0.3 — Orquestração com Airflow
+- [x] **v0.3 — Orquestração com Airflow**
 - [ ] v0.4 — Visualização (Streamlit)
 - [ ] v1.0 — MVP completo local
 - [ ] v1.1 — Migração para GCP (BigQuery)
@@ -108,7 +108,40 @@ docker compose up -d
 
 Acesse o Airflow em http://localhost:8080 (usuário `admin` / senha `admin`).
 
-### 2. Ingestão dos dados
+### 2. Orquestração com Airflow (v0.3 — caminho recomendado)
+
+A partir da v0.3 o pipeline inteiro (download → convert → dbt build) roda como
+uma DAG do Airflow chamada `comex_pipeline`.
+
+**Importar as Variables do Airflow (uma vez após o primeiro `up`):**
+
+```bash
+./scripts/seed_airflow_variables.sh
+```
+
+Isso carrega `comex_anos`, `comex_dbt_vars` e `comex_dbt_target` a partir de
+`airflow/variables.json`.
+
+**Disparar manualmente pela UI:**
+
+1. Acesse http://localhost:8080 (admin / admin).
+2. Destrave (unpause) a DAG `comex_pipeline`.
+3. Clique em ▶ *Trigger DAG* — ou em ▶ *Trigger DAG w/ config* para passar
+   overrides via JSON.
+
+**Overrides aceitos em `dag_run.conf`:**
+
+| Chave | Tipo | Exemplo | Efeito |
+| --- | --- | --- | --- |
+| `anos` | list[int] | `{"anos": [2024]}` | Baixa/converte apenas esses anos |
+| `dbt_vars` | dict | `{"dbt_vars": {"ano_inicio": 2024, "ano_fim": 2024}}` | Janela do dbt |
+| `dbt_target` | str | `{"dbt_target": "duckdb"}` | Target do profiles.yml |
+| `force` | bool | `{"force": false}` | Pula download/convert quando arquivo já existe |
+
+**Agendamento:** todo dia 25 às 06:00 (America/Sao_Paulo) — buffer de 10 dias
+após a publicação mensal do MDIC (~dia 15).
+
+### 3. Ingestão manual (fluxo antigo, ainda funciona)
 
 **Baixar todos os CSVs do MDIC (EXP + IMP de 2020–2024 + tabelas auxiliares):**
 
@@ -122,7 +155,7 @@ docker compose exec airflow-scheduler python /opt/airflow/ingestion/download.py
 docker compose exec airflow-scheduler python /opt/airflow/ingestion/convert_to_parquet.py
 ```
 
-### 3. Transformações com dbt
+### 4. Transformações com dbt
 
 ```bash
 # Testar a conexão com o DuckDB
@@ -142,7 +175,7 @@ docker compose exec airflow-scheduler python /opt/airflow/ingestion/convert_to_p
 
 Tempo esperado num `dbt build` completo: **~25 segundos** (17M linhas em DuckDB).
 
-### 4. Gerar e visualizar a documentação dbt
+### 5. Gerar e visualizar a documentação dbt
 
 ```bash
 # Gera manifest.json + catalog.json + index.html em dbt/target/
@@ -154,7 +187,7 @@ Tempo esperado num `dbt build` completo: **~25 segundos** (17M linhas em DuckDB)
 
 A interface mostra o lineage completo do pipeline (Parquet → staging → core → marts), descrição de cada coluna e o status de cada teste.
 
-### 5. Opções da ingestão
+### 6. Opções da ingestão
 
 ```bash
 # Download parcial: apenas anos específicos
@@ -172,7 +205,7 @@ python ingestion/download.py --force
 
 Os mesmos argumentos funcionam no `convert_to_parquet.py`.
 
-### 6. Parar o ambiente
+### 7. Parar o ambiente
 
 ```bash
 docker compose down          # preserva os dados
@@ -328,10 +361,19 @@ comex-brasil-de/
 │
 ├── scripts/
 │   ├── dbt.sh                       # Wrapper para comandos dbt
-│   └── dbt-docs.sh                  # Gera e serve a documentação dbt
+│   ├── dbt-docs.sh                  # Gera e serve a documentação dbt
+│   └── seed_airflow_variables.sh    # Importa airflow/variables.json (v0.3)
 │
-├── airflow/                         # DAGs (v0.3)
-│   └── dags/
+├── airflow/                         # Orquestração (v0.3)
+│   ├── dags/
+│   │   ├── .airflowignore           # Exclui common/ do scan de DAGs
+│   │   ├── comex_pipeline.py        # DAG end-to-end (download→convert→dbt)
+│   │   └── common/                  # Helpers importados pelas DAGs
+│   │       ├── bash_commands.py     # Builders dos comandos shell
+│   │       ├── config.py            # Resolução de Variables/dag_run.conf
+│   │       └── paths.py             # Constantes + sink seam (v1.1)
+│   ├── plugins/
+│   └── variables.json               # Seed das Airflow Variables
 │
 ├── dashboard/                       # Streamlit (v0.4)
 │

@@ -1,0 +1,3 @@
+# Airflow tenta parsear todo .py dentro de dags/ como se fosse uma DAG.
+# common/ contém helpers importados pelas DAGs — não são DAGs em si.
+common/

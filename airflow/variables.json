@@ -1,0 +1,5 @@
+{
+  "comex_anos": [2020, 2021, 2022, 2023, 2024],
+  "comex_dbt_vars": {"ano_inicio": 2020, "ano_fim": 2024},
+  "comex_dbt_target": "duckdb"
+}

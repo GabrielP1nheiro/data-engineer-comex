@@ -66,6 +66,18 @@ Construir um pipeline de Data Engineering end-to-end usando dados públicos de c
 - **Materialização por camada**: staging=view, core=table, marts=table
 - **Valor monetário único não foi criado em core_comercio** — FOB, frete, seguro e CIF ficam em colunas separadas; o mart escolhe qual usar
 
+### Decisões da v0.3
+- **DAG única** (`comex_pipeline`) com TaskGroups em vez de múltiplas DAGs coordenadas por `Dataset`/`ExternalTaskSensor` — overhead não se justifica num pipeline de ~30 s de compute
+- **`BashOperator`** envolvendo os CLIs existentes — mantém os scripts como fonte única de verdade e usáveis fora do Airflow
+- **`dbt build` numa task única** (não split `run` + `test`) — short-circuit entre camadas se um teste falha, evita marts com dados viciados
+- **`--force=True` default na ingestão** — captura atualizações intra-mês do CSV do ano corrente no MDIC; override via `dag_run.conf`
+- **Cosmos / `astronomer-cosmos` adiado para v1.1** — 15 models e 60 testes não justificam parse-time overhead da manifest; reavaliar quando BigQuery tornar retry per-model valioso
+- **Alerting adiado** — sem webhook/SMTP em v0.3; falhas ficam vermelhas na UI e são capturadas na próxima run
+- **Airflow Variables como fonte** (`comex_anos`, `comex_dbt_vars`, `comex_dbt_target`) + override via `dag_run.conf` — editável pela UI sem redeploy, versionado em `airflow/variables.json`
+- **Seam v1.1**: `COMEX_SINK` env var em `common/paths.py` — sink `"gcs"` levanta `NotImplementedError` agora, implementação real entra na migração BigQuery
+- **`.airflowignore`** em `airflow/dags/` excluindo `common/` — Airflow tenta parsear todo `.py` do diretório como DAG; helpers com imports relativos quebram sem o ignore
+- **Exit codes propagados**: `ingestion/*.py` agora retornam `Result.OK/SKIPPED/FAILED` por arquivo; `main()` exit 1 se qualquer falha — surfacing confiável de falhas parciais no Airflow
+
 ---
 
 ## Roadmap de versões
@@ -88,11 +100,13 @@ Construir um pipeline de Data Engineering end-to-end usando dados públicos de c
 - [x] Script helper `./scripts/dbt.sh`
 - [x] Volume `./dbt:/opt/airflow/dbt` no docker-compose
 
-### v0.3 — Orquestração com Airflow
-- [ ] DAG de ingestão (download + conversão Parquet)
-- [ ] DAG de transformação (dispara dbt run)
-- [ ] DAG completo end-to-end com dependências
-- [ ] Agendamento mensal (alinhado com ciclo do MDIC)
+### v0.3 — Orquestração com Airflow ✅
+- [x] DAG `comex_pipeline` end-to-end (download → convert → dbt build)
+- [x] Dois TaskGroups (`ingest`, `transform`) com dependências declaradas
+- [x] Agendamento mensal `0 6 25 * *` (America/Sao_Paulo) — buffer de 10 dias após publicação do MDIC
+- [x] Helpers `airflow/dags/common/*.py` (config, paths, bash_commands) com precedência `dag_run.conf > Variable > default`
+- [x] Seed de Variables via `airflow/variables.json` + `scripts/seed_airflow_variables.sh`
+- [x] Patch de exit codes em `ingestion/*.py` (enum `Result` OK/SKIPPED/FAILED) para surfacing de falhas no Airflow
 
 ### v0.4 — Visualização
 - [ ] Metabase ou Streamlit conectado nos marts
@@ -168,11 +182,19 @@ comex-brasil-de/
 │
 ├── scripts/
 │   ├── dbt.sh                       # Wrapper para dbt dentro do container
-│   └── dbt-docs.sh                  # Gera e serve a documentação dbt
+│   ├── dbt-docs.sh                  # Gera e serve a documentação dbt
+│   └── seed_airflow_variables.sh    # Importa airflow/variables.json (v0.3)
 │
 ├── airflow/
-│   ├── dags/                        # DAGs (v0.3)
-│   └── plugins/
+│   ├── dags/
+│   │   ├── .airflowignore           # Exclui common/ do scan (v0.3)
+│   │   ├── comex_pipeline.py        # DAG end-to-end (v0.3)
+│   │   └── common/                  # Helpers importados pela DAG
+│   │       ├── bash_commands.py     # Builders dos comandos shell
+│   │       ├── config.py            # Resolução Variable/dag_run.conf
+│   │       └── paths.py             # Paths do container + sink seam (v1.1)
+│   ├── plugins/
+│   └── variables.json               # Seed das Airflow Variables
 │
 ├── dashboard/
 │   └── streamlit_app.py             # App Streamlit (v0.4)
@@ -240,5 +262,5 @@ O assistente terá todo o contexto necessário para continuar de onde parou.
 
 ---
 
-*Última atualização: Abril 2026*
-*Versão atual do projeto: v0.2*
+*Última atualização: 24 de Abril de 2026*
+*Versão atual do projeto: v0.3*

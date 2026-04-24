@@ -31,9 +31,17 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from enum import Enum
 from pathlib import Path
 
 import polars as pl
+
+
+class Result(Enum):
+    """Resultado de uma conversão individual."""
+    OK = "ok"
+    SKIPPED = "skipped"
+    FAILED = "failed"
 
 # -----------------------------------------------------------------------------
 # Configuração
@@ -100,7 +108,7 @@ def _converter_csv(
     destino: Path,
     schema: dict | None = None,
     force: bool = False,
-) -> bool:
+) -> Result:
     """
     Converte um arquivo CSV em Parquet.
 
@@ -109,17 +117,16 @@ def _converter_csv(
         destino: caminho de saída do Parquet
         schema: se fornecido, força os tipos das colunas (evita inferência errada)
         force: se True, reprocessa mesmo que o destino já exista
-
-    Retorna True se o arquivo foi convertido, False se foi pulado.
     """
     if not origem.exists():
-        log.warning(f"⚠  Origem não encontrada: {origem}")
-        return False
+        # Origem ausente é falha: quem chamou esperava encontrar o arquivo.
+        log.error(f"❌ Origem não encontrada: {origem}")
+        return Result.FAILED
 
     if destino.exists() and not force:
         tamanho_mb = destino.stat().st_size / (1024 * 1024)
         log.info(f"⏭  Pulando (já existe): {destino.name} [{tamanho_mb:.1f} MB]")
-        return False
+        return Result.SKIPPED
 
     destino.parent.mkdir(parents=True, exist_ok=True)
 
@@ -127,9 +134,7 @@ def _converter_csv(
     log.info(f"🔄 Convertendo: {origem.name} [{tamanho_csv_mb:.1f} MB]")
 
     try:
-        # scan_csv é lazy — não carrega tudo em memória, permite streaming
         if schema:
-            # Para os arquivos com schema conhecido, forçamos os tipos
             df = pl.read_csv(
                 origem,
                 separator=SEPARADOR,
@@ -154,7 +159,7 @@ def _converter_csv(
         log.error(f"❌ Erro ao converter {origem.name}: {e}")
         if destino.exists():
             destino.unlink()
-        return False
+        return Result.FAILED
 
     tamanho_pq_mb = destino.stat().st_size / (1024 * 1024)
     razao = tamanho_csv_mb / tamanho_pq_mb if tamanho_pq_mb > 0 else 0
@@ -163,13 +168,14 @@ def _converter_csv(
         f"{num_linhas:,} linhas × {num_colunas} colunas, "
         f"compressão {razao:.1f}x]"
     )
-    return True
+    return Result.OK
 
 
-def converter_ncm(direcao: str, force: bool = False) -> tuple[int, int]:
+def converter_ncm(direcao: str, force: bool = False) -> tuple[int, int, list[str]]:
     """
     Converte todos os arquivos NCM de uma direção (exp ou imp).
-    Retorna (convertidos, pulados).
+    Retorna (convertidos, pulados, falhas) onde falhas é a lista de nomes
+    de arquivo que falharam.
     """
     direcao_upper = direcao.upper()
     if direcao_upper == "EXP":
@@ -185,47 +191,55 @@ def converter_ncm(direcao: str, force: bool = False) -> tuple[int, int]:
 
     convertidos = 0
     pulados = 0
+    falhas: list[str] = []
 
-    # Processa na ordem dos anos
     arquivos = sorted(pasta_origem.glob(f"{direcao_upper}_*.csv"))
 
     if not arquivos:
+        # Sem arquivos não é falha aqui: pode ser intencional (p.ex. rodar só
+        # `--direcao exp` sem ter baixado imp). Quem chama decide se faz falta.
         log.warning(f"⚠  Nenhum CSV encontrado em {pasta_origem}")
-        return 0, 0
+        return 0, 0, falhas
 
     for csv_path in arquivos:
         parquet_path = pasta_destino / csv_path.name.replace(".csv", ".parquet")
-        if _converter_csv(csv_path, parquet_path, schema=schema, force=force):
+        resultado = _converter_csv(csv_path, parquet_path, schema=schema, force=force)
+        if resultado is Result.OK:
             convertidos += 1
-        else:
+        elif resultado is Result.SKIPPED:
             pulados += 1
+        else:
+            falhas.append(csv_path.name)
 
-    return convertidos, pulados
+    return convertidos, pulados, falhas
 
 
-def converter_auxiliares(force: bool = False) -> tuple[int, int]:
+def converter_auxiliares(force: bool = False) -> tuple[int, int, list[str]]:
     """
     Converte todas as tabelas auxiliares.
-    Retorna (convertidos, pulados).
+    Retorna (convertidos, pulados, falhas).
     """
     convertidos = 0
     pulados = 0
+    falhas: list[str] = []
 
     arquivos = sorted(AUX_DIR.glob("*.csv"))
 
     if not arquivos:
         log.warning(f"⚠  Nenhuma tabela auxiliar encontrada em {AUX_DIR}")
-        return 0, 0
+        return 0, 0, falhas
 
     for csv_path in arquivos:
         parquet_path = PARQUET_AUX / csv_path.name.replace(".csv", ".parquet")
-        # Tabelas auxiliares: sem schema explícito (arquivos pequenos, inferência OK)
-        if _converter_csv(csv_path, parquet_path, schema=None, force=force):
+        resultado = _converter_csv(csv_path, parquet_path, schema=None, force=force)
+        if resultado is Result.OK:
             convertidos += 1
-        else:
+        elif resultado is Result.SKIPPED:
             pulados += 1
+        else:
+            falhas.append(csv_path.name)
 
-    return convertidos, pulados
+    return convertidos, pulados, falhas
 
 
 # -----------------------------------------------------------------------------
@@ -236,9 +250,12 @@ def executar(
     direcoes: list[str],
     converter_aux: bool = True,
     force: bool = False,
-) -> None:
+) -> int:
     """
     Executa a conversão completa conforme os parâmetros fornecidos.
+
+    Retorna o número de falhas. Zero significa que tudo foi convertido
+    ou pulado por já existir.
     """
     log.info("=" * 60)
     log.info("COMEX BRASIL — Conversão CSV → Parquet")
@@ -250,24 +267,34 @@ def executar(
 
     total_conv = 0
     total_pul = 0
+    total_falhas: list[str] = []
 
     # Dados NCM
     for direcao in direcoes:
         log.info(f"--- {direcao.upper()} ---")
-        conv, pul = converter_ncm(direcao, force=force)
+        conv, pul, falhas = converter_ncm(direcao, force=force)
         total_conv += conv
         total_pul += pul
+        total_falhas.extend(falhas)
 
     # Tabelas auxiliares
     if converter_aux:
         log.info("--- AUXILIARES ---")
-        conv, pul = converter_auxiliares(force=force)
+        conv, pul, falhas = converter_auxiliares(force=force)
         total_conv += conv
         total_pul += pul
+        total_falhas.extend(falhas)
 
     log.info("=" * 60)
-    log.info(f"Concluído: {total_conv} convertidos, {total_pul} pulados")
+    log.info(
+        f"Concluído: {total_conv} convertidos, {total_pul} pulados, "
+        f"{len(total_falhas)} falhas"
+    )
+    if total_falhas:
+        log.error(f"❌ Arquivos com falha: {', '.join(total_falhas)}")
     log.info("=" * 60)
+
+    return len(total_falhas)
 
 
 def parse_args() -> argparse.Namespace:
@@ -304,7 +331,7 @@ def main() -> int:
         direcoes = [args.direcao]
 
     try:
-        executar(
+        falhas = executar(
             direcoes=direcoes,
             converter_aux=not args.sem_aux,
             force=args.force,
@@ -316,7 +343,7 @@ def main() -> int:
         log.exception(f"Erro inesperado: {e}")
         return 1
 
-    return 0
+    return 1 if falhas else 0
 
 
 if __name__ == "__main__":
