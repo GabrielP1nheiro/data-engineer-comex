@@ -1,0 +1,16 @@
+# =============================================================================
+# Comex Brasil — dashboard/requirements.txt
+# Dependências do app Streamlit (v0.4)
+# =============================================================================
+
+# Framework de UI
+streamlit==1.40.2
+
+# Engine analítica local — mesma versão do projeto (ingestion/requirements.txt)
+duckdb==1.0.0
+
+# DataFrame para resultados de query (DuckDB → pandas é zero-copy via Arrow)
+pandas==2.2.3
+
+# Charts interativos
+plotly==5.24.1

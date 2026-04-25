@@ -16,6 +16,9 @@ dbt/logs/
 airflow/logs/
 airflow/plugins/__pycache__/
 
+# Streamlit (v0.4) — secrets jamais versionados
+dashboard/.streamlit/secrets.toml
+
 # Python
 __pycache__/
 *.pyc
@@ -38,3 +41,9 @@ Thumbs.db
 
 # Claude Code — ferramentas locais (agents, KB, commands, CLAUDE.md)
 .claude/
+
+# Notas pessoais / instruções locais
+instrucoes-criar-agentes-e-kbs.txt
+PLAN_V0.3.md
+query_top.py
+PROJECT_CONTEXT.md

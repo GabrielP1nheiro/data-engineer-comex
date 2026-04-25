@@ -1,0 +1,30 @@
+# =============================================================================
+# Comex Brasil — Dockerfile.streamlit
+#
+# Imagem dedicada do dashboard (v0.4). Não compartilha com o Airflow para:
+#   - Manter a imagem leve (~300MB vs 2GB+ do Airflow)
+#   - Restart independente (atualizar dashboard não derruba DAGs)
+#   - Evitar conflito de deps (protobuf do Streamlit vs Airflow 2.9.3)
+# =============================================================================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Dependências primeiro para aproveitar cache de layer
+COPY dashboard/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Código do app — também montado em runtime via bind mount para hot-reload em dev
+COPY dashboard/ /app/
+
+EXPOSE 8501
+
+# Healthcheck via endpoint nativo do Streamlit (sem precisar de curl no slim)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health').read()" || exit 1
+
+CMD ["streamlit", "run", "streamlit_app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true"]

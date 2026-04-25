@@ -66,6 +66,19 @@ Construir um pipeline de Data Engineering end-to-end usando dados públicos de c
 - **Materialização por camada**: staging=view, core=table, marts=table
 - **Valor monetário único não foi criado em core_comercio** — FOB, frete, seguro e CIF ficam em colunas separadas; o mart escolhe qual usar
 
+### Decisões da v0.4
+- **Streamlit 1.40 multipage** em vez de Metabase — Python puro, código versionado (mais material de portfólio que GUI-driven), `pages/` é o padrão idiomático escalável vs `st.tabs`
+- **Container dedicado** (`dashboard/Dockerfile.streamlit`, `python:3.11-slim`, ~300MB) em vez de subir Streamlit dentro do `airflow-scheduler` — restart independente, sem conflito de deps (protobuf vs Airflow 2.9.3), princípio single-responsibility container
+- **Plotly 5.x** em vez de Altair ou `st.line_chart` — interatividade superior, treemap nativo, padrão de mercado em DE; bundle de ~3MB no primeiro load é aceitável
+- **DuckDB sempre `read_only=True`** + bind mount `./data:/data:ro` no docker-compose — proteção dupla contra escrita acidental; mitiga risco #2 do v0.3 (file lock contention) e permite Streamlit rodar concorrente ao Airflow
+- **Filtros por página** (state isolado) em vez de sidebar global compartilhada — dashboards têm dimensões diferentes (UF na balança, NCM no produto, bloco no terceiro); `st.session_state` global poluiria o sidebar com filtros que algumas páginas ignoram
+- **Caching em camadas**: `@st.cache_resource` para a conexão DuckDB (objeto não-serializável, singleton por processo), `@st.cache_data(ttl=300)` para queries de mart, `@st.cache_data(ttl=3600)` para catálogos (UFs, blocos, range de anos) — TTL menor onde frescor importa, maior onde raramente muda
+- **Seam `COMEX_DB_TARGET`** em `dashboard/lib/db.py` (default `duckdb`, branch `bigquery` levanta `NotImplementedError`) — espelha `COMEX_SINK` em `airflow/dags/common/paths.py` da v0.3; futureproofing sem complexidade especulativa
+- **Multipage via filenames** (`pages/1_📊_*.py`) em vez do novo `st.navigation` — padrão amplamente conhecido do Streamlit, ASCII-safe nos slugs
+- **Sem `scripts/streamlit.sh`** — `docker compose up -d streamlit` já é uma linha; wrapper só por consistência seria over-engineering (vs `dbt.sh` que injeta `--profiles-dir` + `docker compose exec`)
+- **Banner explícito sobre sobreposição de blocos** na página de Blocos Econômicos — schema.yml já alerta que um país pode pertencer a múltiplos blocos; o share por ano normaliza pela soma do mart (com sobreposição), o que é tecnicamente válido pra "peso relativo" mas não é decomposição mutuamente exclusiva
+- **Healthcheck via `urllib.request`** no Dockerfile.streamlit em vez de `curl` — mantém a imagem slim sem instalar curl extra
+
 ### Decisões da v0.3
 - **DAG única** (`comex_pipeline`) com TaskGroups em vez de múltiplas DAGs coordenadas por `Dataset`/`ExternalTaskSensor` — overhead não se justifica num pipeline de ~30 s de compute
 - **`BashOperator`** envolvendo os CLIs existentes — mantém os scripts como fonte única de verdade e usáveis fora do Airflow
@@ -108,11 +121,13 @@ Construir um pipeline de Data Engineering end-to-end usando dados públicos de c
 - [x] Seed de Variables via `airflow/variables.json` + `scripts/seed_airflow_variables.sh`
 - [x] Patch de exit codes em `ingestion/*.py` (enum `Result` OK/SKIPPED/FAILED) para surfacing de falhas no Airflow
 
-### v0.4 — Visualização
-- [ ] Metabase ou Streamlit conectado nos marts
-- [ ] Dashboard: balança comercial por estado
-- [ ] Dashboard: principais produtos exportados/importados
-- [ ] Dashboard: evolução por bloco econômico (Mercosul, UE, Ásia)
+### v0.4 — Visualização ✅
+- [x] Streamlit 1.40 conectado nos marts (DuckDB read-only)
+- [x] Dashboard: balança comercial por estado
+- [x] Dashboard: top produtos exportados/importados
+- [x] Dashboard: evolução por bloco econômico (Mercosul, UE, Ásia)
+- [x] Container dedicado (`Dockerfile.streamlit`) isolado do Airflow
+- [x] Seam `COMEX_DB_TARGET` em `dashboard/lib/db.py` (espelhando `COMEX_SINK` da v0.3)
 - [ ] Screenshots para o README
 
 ### v1.0 — MVP completo local
@@ -196,12 +211,23 @@ comex-brasil-de/
 │   ├── plugins/
 │   └── variables.json               # Seed das Airflow Variables
 │
-├── dashboard/
-│   └── streamlit_app.py             # App Streamlit (v0.4)
+├── dashboard/                       # Streamlit (v0.4)
+│   ├── Dockerfile.streamlit
+│   ├── requirements.txt
+│   ├── streamlit_app.py             # Landing + status do warehouse
+│   ├── .streamlit/config.toml       # Tema (paleta consistente)
+│   ├── lib/
+│   │   ├── db.py                    # COMEX_DB_TARGET seam + read_only
+│   │   ├── queries.py               # Queries cacheadas por mart
+│   │   └── charts.py                # Helpers Plotly (paleta, formatadores)
+│   └── pages/
+│       ├── 1_📊_Balanca_Comercial.py
+│       ├── 2_🏆_Top_Produtos.py
+│       └── 3_🌐_Blocos_Economicos.py
 │
 └── docs/
     ├── architecture.md
-    └── images/
+    └── images/                      # Screenshots dos dashboards
 ```
 
 ---
@@ -262,5 +288,5 @@ O assistente terá todo o contexto necessário para continuar de onde parou.
 
 ---
 
-*Última atualização: 24 de Abril de 2026*
-*Versão atual do projeto: v0.3*
+*Última atualização: 25 de Abril de 2026*
+*Versão atual do projeto: v0.4*

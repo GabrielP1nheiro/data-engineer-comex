@@ -3,8 +3,8 @@
 > Pipeline de Data Engineering end-to-end usando dados públicos de comércio exterior brasileiro (MDIC / Comex Stat).
 
 ## Status do projeto
-![Version](https://img.shields.io/badge/version-v0.3-blue)
-![Status](https://img.shields.io/badge/status-Airflow%20orchestrated-brightgreen)
+![Version](https://img.shields.io/badge/version-v0.4-blue)
+![Status](https://img.shields.io/badge/status-Streamlit%20dashboards-brightgreen)
 
 ## Sobre o projeto
 
@@ -70,7 +70,7 @@ Após `dbt run` completo, o arquivo `data/comex.duckdb` fica em **~440 MB** (inc
 - [x] **v0.1 — Infraestrutura base (Docker + ingestão)**
 - [x] **v0.2 — dbt local com DuckDB**
 - [x] **v0.3 — Orquestração com Airflow**
-- [ ] v0.4 — Visualização (Streamlit)
+- [x] **v0.4 — Visualização (Streamlit)**
 - [ ] v1.0 — MVP completo local
 - [ ] v1.1 — Migração para GCP (BigQuery)
 - [ ] v1.2 — Camada OCI
@@ -205,7 +205,45 @@ python ingestion/download.py --force
 
 Os mesmos argumentos funcionam no `convert_to_parquet.py`.
 
-### 7. Parar o ambiente
+### 7. Dashboards Streamlit (v0.4)
+
+A partir da v0.4 os marts ficam navegáveis via Streamlit, lendo o DuckDB em
+modo **somente leitura** (pode rodar concorrente ao Airflow sem risco).
+
+**Subir o serviço (primeira vez ou após mudar `dashboard/requirements.txt`):**
+
+```bash
+docker compose up -d --build streamlit
+```
+
+**Subsequentes:**
+
+```bash
+docker compose up -d streamlit
+```
+
+Acesse em http://localhost:8501. A página inicial mostra o status do
+warehouse (linhas em `core_comercio`, cobertura de anos, mtime do arquivo).
+
+**Páginas disponíveis (sidebar do Streamlit):**
+
+| Página | Marts consumidos | Filtros |
+| --- | --- | --- |
+| 📊 **Balança Comercial** | `mart_balanca_comercial` | UF (multi) + range de anos |
+| 🏆 **Top Produtos** | `mart_top_produtos` | Direção (EXP/IMP) + ano + top-N |
+| 🌐 **Blocos Econômicos** | `mart_blocos_economicos` | Direção + blocos (multi) |
+
+Cada página oferece KPIs no topo, charts Plotly interativos e tabela
+detalhada com download em CSV.
+
+**Hot-reload em dev:** o código de `dashboard/` é montado via bind mount;
+salvar um `.py` recarrega o app automaticamente.
+
+**Forward compatibility:** a conexão é encapsulada em `dashboard/lib/db.py`
+com a env var `COMEX_DB_TARGET` (default `duckdb`). Na v1.1 (BigQuery) basta
+implementar o branch `bigquery` — as queries e charts não mudam.
+
+### 8. Parar o ambiente
 
 ```bash
 docker compose down          # preserva os dados
@@ -376,9 +414,21 @@ comex-brasil-de/
 │   └── variables.json               # Seed das Airflow Variables
 │
 ├── dashboard/                       # Streamlit (v0.4)
+│   ├── Dockerfile.streamlit         # Imagem dedicada (~300MB, isolada do Airflow)
+│   ├── requirements.txt             # streamlit, duckdb, pandas, plotly
+│   ├── streamlit_app.py             # Landing page + status do warehouse
+│   ├── .streamlit/config.toml       # Tema (paleta verde/amarelo discreta)
+│   ├── lib/
+│   │   ├── db.py                    # get_connection() + COMEX_DB_TARGET seam
+│   │   ├── queries.py               # Queries cacheadas por mart
+│   │   └── charts.py                # Helpers Plotly (paleta, formatadores PT-BR)
+│   └── pages/
+│       ├── 1_📊_Balanca_Comercial.py
+│       ├── 2_🏆_Top_Produtos.py
+│       └── 3_🌐_Blocos_Economicos.py
 │
 └── docs/
-    └── images/
+    └── images/                      # Screenshots dos dashboards
 ```
 
 ---

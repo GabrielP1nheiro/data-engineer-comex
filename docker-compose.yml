@@ -128,6 +128,31 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # ---------------------------------------------------------------------------
+  # Streamlit — dashboards interativos (v0.4)
+  # Acesso: http://localhost:8501
+  # Lê o DuckDB em modo somente leitura; pode rodar concorrente ao Airflow.
+  # Sem depends_on — pode subir antes da DAG ter populado o warehouse;
+  # o app mostra mensagem amigável caso o arquivo ainda não exista.
+  # ---------------------------------------------------------------------------
+  streamlit:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile.streamlit
+    ports:
+      - "8501:8501"
+    environment:
+      COMEX_DB_TARGET: duckdb
+      COMEX_DUCKDB_PATH: /data/comex.duckdb
+    volumes:
+      # Warehouse em :ro — proteção dupla (junto com duckdb read_only=True)
+      - ./data:/data:ro
+      # Hot-reload do código em dev
+      - ./dashboard:/app
+    restart: unless-stopped
+    networks:
+      - comex-network
+
 # =============================================================================
 # Volumes e redes
 # =============================================================================

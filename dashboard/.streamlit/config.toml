@@ -1,0 +1,19 @@
+# =============================================================================
+# Comex Brasil — Streamlit theme (v0.4)
+# Paleta verde/amarelo discreta + neutros (sem ufanismo).
+# =============================================================================
+
+[theme]
+base = "light"
+primaryColor = "#198754"             # verde sóbrio
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8F9FA"
+textColor = "#212529"
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
