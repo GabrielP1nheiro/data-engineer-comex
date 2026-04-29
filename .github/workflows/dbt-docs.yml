@@ -1,0 +1,62 @@
+# =============================================================================
+# Deploy dbt docs (estáticas) → GitHub Pages
+#
+# Dispara em push pra main que toca dbt/** ou este próprio workflow.
+# Usa `dbt docs generate --static --empty-catalog` para produzir um único HTML
+# self-contained sem precisar popular o DuckDB no CI (lineage + descrições +
+# tests são suficientes; estatísticas reais ficam pra v1.1 com BigQuery).
+#
+# URL de saída: https://gabrielp1nheiro.github.io/data-engineer-comex/
+#
+# Setup manual de 1ª vez (no GitHub UI):
+#   1. Settings → Pages → Source: "Deploy from a branch" → branch `gh-pages`
+#      → folder `/ (root)` → Save
+#   2. Settings → Actions → General → Workflow permissions:
+#      "Read and write permissions"
+# =============================================================================
+
+name: Deploy dbt docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dbt/**'
+      - '.github/workflows/dbt-docs.yml'
+  workflow_dispatch:        # permite rodar manual via UI
+
+permissions:
+  contents: write           # peaceiris/actions-gh-pages precisa pra pushar gh-pages
+
+jobs:
+  deploy-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dbt-duckdb
+        run: pip install dbt-duckdb==1.8.1
+
+      - name: Generate static docs
+        working-directory: dbt
+        run: |
+          mkdir -p ../data        # placeholder pro path do profile (target `ci` usa /tmp)
+          dbt parse --profiles-dir . --target ci
+          dbt docs generate --profiles-dir . --target ci --static --empty-catalog
+
+      - name: Prepare publish dir
+        run: |
+          mkdir public
+          cp dbt/target/static_index.html public/index.html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: public
+          publish_branch: gh-pages
+          force_orphan: true   # branch gh-pages é throwaway, sem histórico antigo

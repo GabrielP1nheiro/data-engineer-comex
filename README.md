@@ -22,24 +22,54 @@ O objetivo é demonstrar habilidades práticas de engenharia de dados — desde 
 
 ## Arquitetura
 
-```
-MDIC / Comex Stat (CSV)
-        │
-        ▼
-  Python + Polars (download + conversão Parquet)
-        │
-        ▼
-  DuckDB ◄── dbt Core (staging → core → marts)
-        │
-        ▼
-  Apache Airflow (orquestração)
-        │
-        ▼
-  Streamlit / Metabase (dashboards)
+```mermaid
+flowchart TB
+    MDIC[("MDIC / Comex Stat<br/><i>balanca.economia.gov.br</i><br/>CSV Latin-1 mensal")]:::source
 
-  Fase 2: DuckDB → BigQuery (GCP)
-  Fase 3: BigQuery → OCI Autonomous DB
+    subgraph DOCKER["Docker Compose &nbsp;·&nbsp; local"]
+        direction TB
+
+        subgraph AIRFLOW_C["airflow-scheduler &nbsp;·&nbsp; :8080"]
+            direction LR
+            DL["download.py<br/><i>requests</i>"]
+            CV["convert_to_parquet.py<br/><i>Polars + zstd</i>"]
+            DBT["dbt build<br/><i>15 models · 60 tests</i>"]
+            DL --> CV --> DBT
+        end
+
+        PQ[("data/parquet/<br/><i>EXP/IMP + auxiliares</i>")]:::store
+        DUCK[("DuckDB<br/>data/comex.duckdb<br/><i>hub analítico</i>")]:::store
+
+        subgraph ST_C["streamlit &nbsp;·&nbsp; :8501"]
+            DASH["3 dashboards<br/>balança · top NCMs · blocos"]
+        end
+
+        AF["Airflow scheduler<br/><i>cron: 0 6 25 * * (BRT)</i>"]:::orch
+    end
+
+    GCP[("GCP &nbsp;·&nbsp; v1.1<br/><i>BigQuery + GCS</i>")]:::future
+    OCI[("OCI &nbsp;·&nbsp; v1.2<br/><i>Autonomous DB + Object Storage</i>")]:::future
+
+    MDIC -->|HTTPS| DL
+    CV -->|grava| PQ
+    PQ -->|read_parquet via sources| DBT
+    DBT -->|materializa staging/core/marts| DUCK
+    DUCK -->|read-only| DASH
+
+    AF -.orquestra.-> DL
+    AF -.orquestra.-> CV
+    AF -.orquestra.-> DBT
+
+    DUCK -.migra.-> GCP
+    GCP -.migra.-> OCI
+
+    classDef source fill:#fef3c7,stroke:#92400e,stroke-width:2px,color:#111
+    classDef store fill:#dbeafe,stroke:#1e40af,stroke-width:2px,color:#111
+    classDef orch fill:#f3e8ff,stroke:#6b21a8,stroke-width:1px,stroke-dasharray:5 5,color:#111
+    classDef future fill:#f3f4f6,stroke:#6b7280,stroke-width:1px,stroke-dasharray:3 3,color:#111
 ```
+
+> **Legenda:** caixas amarelas = fontes externas, azuis = armazenamento de dados, lilás pontilhado = orquestração, cinza pontilhado = migrações futuras (v1.1 / v1.2).
 
 ## Stack
 
@@ -176,6 +206,13 @@ docker compose exec airflow-scheduler python /opt/airflow/ingestion/convert_to_p
 Tempo esperado num `dbt build` completo: **~25 segundos** (17M linhas em DuckDB).
 
 ### 5. Gerar e visualizar a documentação dbt
+
+🌐 **Versão hospedada (recomendada para visualizar sem subir o ambiente):**
+[`https://gabrielp1nheiro.github.io/data-engineer-comex/`](https://gabrielp1nheiro.github.io/data-engineer-comex/)
+
+A página mostra o lineage completo do pipeline (Parquet → staging → core → marts), descrição de cada coluna e os 60 testes. É publicada automaticamente a cada push em `main` que toca `dbt/**`, via o workflow `.github/workflows/dbt-docs.yml` (usa `dbt docs generate --static --empty-catalog` — sem estatísticas reais; isso volta na v1.1 com BigQuery).
+
+**Geração local (para debug ou ambiente offline):**
 
 ```bash
 # Gera manifest.json + catalog.json + index.html em dbt/target/

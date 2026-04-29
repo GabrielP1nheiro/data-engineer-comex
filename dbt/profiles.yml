@@ -33,6 +33,22 @@ comex_brasil:
         - httpfs  # reserva — útil ao ler Parquet remoto (S3/GCS) no futuro
 
     # -------------------------------------------------------------------------
+    # CI / GitHub Actions — usado SOMENTE por `dbt parse` + `dbt docs generate`
+    # no workflow .github/workflows/dbt-docs.yml. Nunca executa models.
+    #
+    # Path em /tmp porque o runner do GitHub Actions tem permissões mais
+    # restritas em ../data; isolar em /tmp evita ruído com volumes locais
+    # e torna explícito que esse perfil é throwaway (sem persistência).
+    # threads:1 elimina variabilidade de paralelismo no parse.
+    # -------------------------------------------------------------------------
+    ci:
+      type: duckdb
+      path: "/tmp/comex-ci.duckdb"
+      threads: 1
+      extensions:
+        - parquet
+
+    # -------------------------------------------------------------------------
     # BigQuery — placeholder para v1.1 (NÃO usar ainda)
     #
     # Quando migrarmos para GCP, preencher project/dataset/keyfile e
