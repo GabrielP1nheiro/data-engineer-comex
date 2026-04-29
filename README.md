@@ -3,8 +3,9 @@
 > Pipeline de Data Engineering end-to-end usando dados públicos de comércio exterior brasileiro (MDIC / Comex Stat).
 
 ## Status do projeto
-![Version](https://img.shields.io/badge/version-v0.4-blue)
-![Status](https://img.shields.io/badge/status-Streamlit%20dashboards-brightgreen)
+![Version](https://img.shields.io/badge/version-v1.0-blue)
+![Status](https://img.shields.io/badge/status-MVP%20polished-brightgreen)
+[![dbt docs](https://img.shields.io/badge/dbt%20docs-live-orange)](https://gabrielp1nheiro.github.io/data-engineer-comex/)
 
 ## Sobre o projeto
 
@@ -101,7 +102,7 @@ Após `dbt run` completo, o arquivo `data/comex.duckdb` fica em **~440 MB** (inc
 - [x] **v0.2 — dbt local com DuckDB**
 - [x] **v0.3 — Orquestração com Airflow**
 - [x] **v0.4 — Visualização (Streamlit)**
-- [ ] v1.0 — MVP completo local
+- [x] **v1.0 — MVP completo local (diagrama Mermaid + dbt docs hospedado em GitHub Pages)**
 - [ ] v1.1 — Migração para GCP (BigQuery)
 - [ ] v1.2 — Camada OCI
 - [ ] v2.0 — Camada de IA (agentes sobre os dados)
